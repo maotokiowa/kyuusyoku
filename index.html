@@ -1,567 +1,85 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>目線で発表！今日の給食</title>
-    <style>
-        * { box-sizing: border-box; user-select: none; margin: 0; padding: 0; }
-        body { font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; background-color: #f1f5f9; color: #1e293b; height: 100vh; overflow: hidden; }
-
-        /* 画面切り替え */
-        .screen { display: none; flex-direction: column; height: 100vh; padding: 20px; position: relative; }
-        .screen.active { display: flex; }
-
-        /* 教員用設定画面 */
-        .setup-container { background: white; border-radius: 20px; padding: 25px; max-width: 800px; margin: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-height: 90vh; overflow-y: auto; }
-        .setup-header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #e2e8f0; padding-bottom: 10px; }
-        .setup-header h1 { font-size: 22pt; color: #0f172a; }
+function predictWebcam() {
+    if (faceLandmarker && ui.presentationScreen.classList.contains('active')) {
+        let startTimeMs = performance.now();
         
-        .section-title { font-size: 14pt; font-weight: bold; color: #dc2626; margin: 15px 0 10px; }
-        
-        /* 献立選択グリッド */
-        .preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
-        .preset-card { border: 3px solid #cbd5e1; border-radius: 12px; padding: 12px; text-align: center; cursor: pointer; transition: all 0.2s; background: #f8fafc; }
-        .preset-card.selected { border-color: #dc2626; background-color: #fef2f2; box-shadow: 0 0 0 2px #dc2626; }
-        .preset-icon { font-size: 36pt; display: block; margin-bottom: 5px; }
-        .preset-label { font-size: 13pt; font-weight: bold; }
+        if (ui.video.readyState >= 2 && lastVideoTime !== ui.video.currentTime) {
+            lastVideoTime = ui.video.currentTime;
+            const results = faceLandmarker.detectForVideo(ui.video, startTimeMs);
 
-        /* カスタム項目追加 */
-        .custom-input-group { display: flex; gap: 10px; margin-bottom: 20px; }
-        .custom-input-group input { padding: 10px; font-size: 14pt; border: 2px solid #cbd5e1; border-radius: 8px; outline: none; }
-        .custom-input-group input[type="text"] { flex: 1; }
-
-        /* 設定項目 */
-        .setting-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; background: #f1f5f9; padding: 12px 18px; border-radius: 10px; }
-        .setting-row label { font-weight: bold; font-size: 12pt; }
-        .setting-row select { padding: 8px 12px; font-size: 12pt; border-radius: 8px; border: 2px solid #cbd5e1; }
-
-        .btn { padding: 15px 25px; font-size: 16pt; font-weight: bold; color: white; border: none; border-radius: 12px; cursor: pointer; transition: background 0.2s; text-align: center; width: 100%; }
-        .btn-primary { background-color: #dc2626; }
-        .btn-primary:hover { background-color: #b91c1c; }
-        .btn-secondary { background-color: #64748b; }
-
-        /* カメラワイプ */
-        .camera-container { position: absolute; top: 15px; right: 15px; width: 140px; height: 105px; border-radius: 12px; overflow: hidden; border: 3px solid #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 100; background: #000; }
-        #webcam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-
-        /* 生徒用発表画面（背景色：赤） */
-        #presentation-screen { background-color: #dc2626; }
-
-        .presentation-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-right: 160px; }
-        .presentation-title { font-size: 26pt; font-weight: bold; color: #dc2626; background: white; padding: 10px 25px; border-radius: 50px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
-
-        .presentation-grid { flex: 1; display: grid; gap: 20px; width: 100%; height: 100%; }
-        .grid-1, .grid-2 { grid-template-columns: repeat(2, 1fr); }
-        .grid-3, .grid-4 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); }
-        .grid-5, .grid-6 { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); }
-
-        /* 発表カード */
-        .menu-card { background: white; border-radius: 24px; border: 6px solid #fca5a5; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,0.2); transition: transform 0.1s, border-color 0.1s, opacity 0.5s ease, visibility 0.5s ease; }
-        .menu-card.hovered { border-color: #facc15; transform: scale(1.03); }
-        .menu-card.selected-active { border-color: #22c55e; background-color: #f0fdf4; animation: pulse 0.3s ease; }
-        
-        /* 消去スタイル */
-        .menu-card.disappeared { opacity: 0; visibility: hidden; pointer-events: none; }
-
-        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.08); } 100% { transform: scale(1); } }
-
-        .menu-icon { font-size: 70pt; line-height: 1; margin-bottom: 10px; pointer-events: none; }
-        .menu-label { font-size: 28pt; font-weight: bold; color: #0f172a; pointer-events: none; }
-
-        /* 注視ゲージ */
-        .gauge-overlay { position: absolute; bottom: 0; left: 0; height: 20px; background-color: #facc15; width: 0%; transition: width 0.05s linear; }
-
-        /* 全達成時のキランと光る演出 */
-        .sparkle-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 200; opacity: 0; background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, rgba(254,240,138,0.8) 40%, rgba(220,38,38,0) 80%); }
-        .sparkle-overlay.active { animation: flashSparkle 1.2s ease-out forwards; }
-
-        @keyframes flashSparkle {
-            0% { opacity: 0; transform: scale(0.3); }
-            40% { opacity: 1; transform: scale(1.2); }
-            70% { opacity: 1; transform: scale(1.0); }
-            100% { opacity: 0; transform: scale(1.1); }
-        }
-
-        /* 最終達成メッセージポップアップ */
-        .completion-message { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0); font-size: 40pt; font-weight: bold; color: #dc2626; background: #ffffff; padding: 25px 50px; border-radius: 40px; box-shadow: 0 15px 35px rgba(0,0,0,0.4); z-index: 210; pointer-events: none; transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); text-align: center; white-space: nowrap; border: 6px solid #facc15; }
-        .completion-message.show { transform: translate(-50%, -50%) scale(1); }
-
-        /* 戻るボタン */
-        .back-btn { position: absolute; bottom: 15px; left: 15px; z-index: 100; width: auto; padding: 10px 20px; font-size: 12pt; background-color: rgba(255,255,255,0.9); color: #0f172a; border: none; font-weight: bold; }
-    </style>
-</head>
-<body>
-
-    <!-- 1. 教員用設定画面 -->
-    <div id="setup-screen" class="screen active">
-        <div class="setup-container">
-            <div class="setup-header">
-                <h1>🍱 今日の給食 発表設定</h1>
-                <p style="color: #64748b; margin-top: 5px;">生徒が発表する献立を選んでください</p>
-            </div>
-
-            <div class="section-title">1. 本日の献立を選択（タップして選択）</div>
-            <div id="preset-container" class="preset-grid"></div>
-
-            <div class="section-title">2. メニューを追加（リストにない場合）</div>
-            <div class="custom-input-group">
-                <input type="text" id="custom-emoji" placeholder="絵文字 (例: 🧃)" style="width: 100px; text-align: center;">
-                <input type="text" id="custom-label" placeholder="メニュー名 (例: ジュース)">
-                <button id="add-custom-btn" class="btn btn-secondary" style="width: 120px; font-size: 12pt; padding: 10px;">追加</button>
-            </div>
-
-            <div class="section-title">3. 目線・感度の設定</div>
-            <div class="setting-row">
-                <label for="gaze-sensitivity">目線の感度</label>
-                <select id="gaze-sensitivity">
-                    <option value="0.04" selected>iPad最適（超高感度・わずかな目線で反応）</option>
-                    <option value="0.08">高感度</option>
-                    <option value="0.12">標準</option>
-                </select>
-            </div>
-
-            <div class="setting-row">
-                <label for="dwell-time">決定までの注視時間</label>
-                <select id="dwell-time">
-                    <option value="250" selected>0.25秒（超爆速）</option>
-                    <option value="350">0.35秒（かなりはい）</option>
-                    <option value="500">0.5秒（ふつう）</option>
-                </select>
-            </div>
-
-            <button id="start-btn" class="btn btn-primary" style="margin-top: 15px;">カメラを起動して発表スタート！</button>
-            <p id="loading-msg" style="text-align: center; color: #dc2626; font-weight: bold; margin-top: 10px; display: none;">AIモデルを準備中...</p>
-        </div>
-    </div>
-
-    <!-- 2. 生徒用発表画面 -->
-    <div id="presentation-screen" class="screen">
-        <!-- ★iPad/iOS対策: muted, playsinline, autoplay を明示 -->
-        <div class="camera-container">
-            <video id="webcam" autoplay playsinline muted></video>
-        </div>
-
-        <div class="presentation-header">
-            <div class="presentation-title">☀️ きょうの 給食</div>
-        </div>
-
-        <div id="presentation-grid" class="presentation-grid"></div>
-
-        <!-- 全達成演出要素 -->
-        <div id="sparkle-overlay" class="sparkle-overlay"></div>
-        <div id="completion-message" class="completion-message">💖 おいしく食べましょう！ 🎶</div>
-
-        <button id="back-to-setup" class="btn btn-secondary back-btn">⚙️ 設定画面へ戻る</button>
-    </div>
-
-    <script type="module">
-        import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
-
-        const defaultPresets = [
-            { id: 'rice', icon: '🍚', label: 'ごはん' },
-            { id: 'bread', icon: '🍞', label: 'パン' },
-            { id: 'soup', icon: '🥣', label: 'スープ・みそ汁' },
-            { id: 'milk', icon: '🥛', label: 'ぎゅうにゅう' },
-            { id: 'meat', icon: '🥩', label: 'おにく' },
-            { id: 'fish', icon: '🐟', label: 'おさかな' },
-            { id: 'salad', icon: '🥗', label: 'サラダ' },
-            { id: 'dessert', icon: '🍮', label: 'デザート' },
-            { id: 'fruit', icon: '🍎', label: 'くだもの' },
-            { id: 'noodle', icon: '🍜', label: 'めん' }
-        ];
-
-        let selectedItems = ['rice', 'soup', 'milk', 'meat', 'dessert'];
-        let dwellTimeMs = 250;
-        let sensitivityThreshold = 0.04;
-        let faceLandmarker = null;
-        let lastVideoTime = -1;
-        let isCameraInit = false;
-
-        let currentTargetIndex = -1;
-        let dwellStartTime = null;
-        let isCoolingDown = false;
-
-        const ui = {
-            presetContainer: document.getElementById('preset-container'),
-            customEmoji: document.getElementById('custom-emoji'),
-            customLabel: document.getElementById('custom-label'),
-            addCustomBtn: document.getElementById('add-custom-btn'),
-            startBtn: document.getElementById('start-btn'),
-            loadingMsg: document.getElementById('loading-msg'),
-            dwellTimeSelect: document.getElementById('dwell-time'),
-            sensitivitySelect: document.getElementById('gaze-sensitivity'),
-            setupScreen: document.getElementById('setup-screen'),
-            presentationScreen: document.getElementById('presentation-screen'),
-            presentationGrid: document.getElementById('presentation-grid'),
-            sparkleOverlay: document.getElementById('sparkle-overlay'),
-            completionMessage: document.getElementById('completion-message'),
-            backToSetupBtn: document.getElementById('back-to-setup'),
-            video: document.getElementById('webcam')
-        };
-
-        function renderPresets() {
-            ui.presetContainer.innerHTML = '';
-            defaultPresets.forEach(item => {
-                const isSelected = selectedItems.includes(item.id);
-                const card = document.createElement('div');
-                card.className = `preset-card ${isSelected ? 'selected' : ''}`;
-                card.innerHTML = `<span class="preset-icon">${item.icon}</span><span class="preset-label">${item.label}</span>`;
-                card.addEventListener('click', () => toggleSelect(item.id));
-                ui.presetContainer.appendChild(card);
-            });
-        }
-
-        function toggleSelect(id) {
-            if (selectedItems.includes(id)) {
-                if (selectedItems.length <= 1) {
-                    alert("最低1つは献立を選択してください。");
-                    return;
-                }
-                selectedItems = selectedItems.filter(i => i !== id);
-            } else {
-                selectedItems.push(id);
-            }
-            renderPresets();
-        }
-
-        ui.addCustomBtn.addEventListener('click', () => {
-            const emoji = ui.customEmoji.value.trim() || '🍽️';
-            const label = ui.customLabel.value.trim();
-            if (!label) {
-                alert("メニュー名を入力してください。");
-                return;
-            }
-            const newId = 'custom_' + Date.now();
-            defaultPresets.push({ id: newId, icon: emoji, label: label });
-            selectedItems.push(newId);
-            ui.customEmoji.value = '';
-            ui.customLabel.value = '';
-            renderPresets();
-        });
-
-        // iOSの音声制限解除用フラグ
-        let audioUnlocked = false;
-        function unlockAudio() {
-            if (audioUnlocked) return;
-            if ('speechSynthesis' in window) {
-                const dummyUtterance = new SpeechSynthesisUtterance('');
-                window.speechSynthesis.speak(dummyUtterance);
-            }
-            audioUnlocked = true;
-        }
-
-        function speak(text, onEnd) {
-            if (!('speechSynthesis' in window)) return;
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'ja-JP';
-            utterance.rate = 0.95;
-            if (onEnd) {
-                utterance.onend = onEnd;
-                utterance.onerror = onEnd;
-            }
-            window.speechSynthesis.speak(utterance);
-        }
-
-        function playKPopSound() {
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (!AudioContext) return;
-            const ctx = new AudioContext();
-
-            const tempo = 0.12; 
-            const melody = [
-                { note: 659.25, time: 0 },
-                { note: 783.99, time: 1 },
-                { note: 880.00, time: 2 },
-                { note: 1046.50, time: 3.5 },
-                { note: 987.77, time: 4.5 },
-                { note: 880.00, time: 5.5 },
-                { note: 1046.50, time: 7 },
-                { note: 1174.66, time: 8.5 },
-                { note: 1318.51, time: 10 }
-            ];
-
-            melody.forEach(item => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = 'sawtooth';
-                osc.frequency.value = item.note;
-
-                const startTime = ctx.currentTime + item.time * tempo;
-                gain.gain.setValueAtTime(0.25, startTime);
-                gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35);
-
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(startTime);
-                osc.stop(startTime + 0.35);
-            });
-
-            const bassline = [
-                { note: 220.00, time: 0 },
-                { note: 220.00, time: 2 },
-                { note: 174.61, time: 4 },
-                { note: 196.00, time: 7 },
-                { note: 220.00, time: 10 }
-            ];
-
-            bassline.forEach(item => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = 'square';
-                osc.frequency.value = item.note;
-
-                const startTime = ctx.currentTime + item.time * tempo;
-                gain.gain.setValueAtTime(0.3, startTime);
-                gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.3);
-
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(startTime);
-                osc.stop(startTime + 0.3);
-            });
-        }
-
-        ui.startBtn.addEventListener('click', async () => {
-            unlockAudio(); // iOS Safariの音声ロック解除
-            dwellTimeMs = parseInt(ui.dwellTimeSelect.value);
-            sensitivityThreshold = parseFloat(ui.sensitivitySelect.value);
-            ui.startBtn.disabled = true;
-            ui.loadingMsg.style.display = 'block';
-
-            if (!isCameraInit) {
-                await initAI();
-            } else {
-                startPresentation();
-            }
-        });
-
-        async function initAI() {
-            try {
-                const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+            if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+                const shapes = results.faceBlendshapes[0].categories;
                 
-                faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-                    baseOptions: { 
-                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`, 
-                        delegate: "CPU" 
-                    },
-                    outputFaceBlendshapes: true, runningMode: "VIDEO", numFaces: 1
-                });
+                // ★iPad用にブースト倍率を3.5倍〜4.5倍に引き上げ
+                const left = ((shapes.find(s => s.categoryName === "eyeLookOutLeft")?.score || 0) + 
+                             (shapes.find(s => s.categoryName === "eyeLookInRight")?.score || 0)) * 3.5;
+                const right = ((shapes.find(s => s.categoryName === "eyeLookInLeft")?.score || 0) + 
+                              (shapes.find(s => s.categoryName === "eyeLookOutRight")?.score || 0)) * 3.5;
+                const up = ((shapes.find(s => s.categoryName === "eyeLookUpLeft")?.score || 0) + 
+                           (shapes.find(s => s.categoryName === "eyeLookUpRight")?.score || 0)) * 4.5; // 上方向は特に弱いため強力補正
+                const down = ((shapes.find(s => s.categoryName === "eyeLookDownLeft")?.score || 0) + 
+                             (shapes.find(s => s.categoryName === "eyeLookDownRight")?.score || 0)) * 3.5;
 
-                const constraints = {
-                    video: {
-                        facingMode: "user",
-                        width: { ideal: 640 },
-                        height: { ideal: 480 }
-                    }
-                };
-
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                ui.video.srcObject = stream;
-                
-                // iPad Safari対策: 明示的にplay()を呼び出す
-                await ui.video.play();
-
-                isCameraInit = true;
-                predictWebcam();
-                startPresentation();
-            } catch (err) {
-                console.error("AI/Camera Error:", err);
-                alert("カメラの読み込みに失敗しました。\nSafariの設定でカメラアクセスが『許可』になっているか確認してください。\nエラー: " + err.message);
-                ui.startBtn.disabled = false;
-                ui.loadingMsg.style.display = 'none';
-            }
-        }
-
-        function startPresentation() {
-            ui.setupScreen.classList.remove('active');
-            ui.presentationScreen.classList.add('active');
-            ui.startBtn.disabled = false;
-            ui.loadingMsg.style.display = 'none';
-
-            ui.sparkleOverlay.classList.remove('active');
-            ui.completionMessage.classList.remove('show');
-
-            const activeItems = defaultPresets.filter(p => selectedItems.includes(p.id));
-            ui.presentationGrid.className = `presentation-grid grid-${activeItems.length}`;
-            ui.presentationGrid.innerHTML = '';
-
-            activeItems.forEach((item, index) => {
-                const card = document.createElement('div');
-                card.className = 'menu-card';
-                card.id = `card-${index}`;
-                card.innerHTML = `
-                    <div class="menu-icon">${item.icon}</div>
-                    <div class="menu-label">${item.label}</div>
-                    <div class="gauge-overlay" id="gauge-${index}"></div>
-                `;
-                ui.presentationGrid.appendChild(card);
-            });
-
-            speak("今日の給食を発表します。");
-        }
-
-        function predictWebcam() {
-            if (faceLandmarker && ui.presentationScreen.classList.contains('active')) {
-                let startTimeMs = performance.now();
-                
-                // iPad/iOS Safari対策: readyStateがHAVE_ENOUGH_DATA(4)以上であることを確認
-                if (ui.video.readyState >= 2 && lastVideoTime !== ui.video.currentTime) {
-                    lastVideoTime = ui.video.currentTime;
-                    const results = faceLandmarker.detectForVideo(ui.video, startTimeMs);
-
-                    if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
-                        const shapes = results.faceBlendshapes[0].categories;
-                        
-                        // iPad用に目線数値を2倍にブースト（小さな目の動きを大きく検出）
-                        const left = ((shapes.find(s => s.categoryName === "eyeLookOutLeft")?.score || 0) + 
-                                     (shapes.find(s => s.categoryName === "eyeLookInRight")?.score || 0)) * 2.0;
-                        const right = ((shapes.find(s => s.categoryName === "eyeLookInLeft")?.score || 0) + 
-                                      (shapes.find(s => s.categoryName === "eyeLookOutRight")?.score || 0)) * 2.0;
-                        const up = ((shapes.find(s => s.categoryName === "eyeLookUpLeft")?.score || 0) + 
-                                   (shapes.find(s => s.categoryName === "eyeLookUpRight")?.score || 0)) * 2.5;
-                        const down = ((shapes.find(s => s.categoryName === "eyeLookDownLeft")?.score || 0) + 
-                                     (shapes.find(s => s.categoryName === "eyeLookDownRight")?.score || 0)) * 2.0;
-
-                        const targetIndex = calculateGazeZone(left, right, up, down);
-                        updateDwellTime(targetIndex);
-                    } else {
-                        updateDwellTime(-1);
-                    }
-                }
-            }
-            requestAnimationFrame(predictWebcam);
-        }
-
-        function calculateGazeZone(left, right, up, down) {
-            const activeItems = defaultPresets.filter(p => selectedItems.includes(p.id));
-            const count = activeItems.length;
-
-            let THRESHOLD = sensitivityThreshold;
-
-            if (left < THRESHOLD && right < THRESHOLD && up < THRESHOLD && down < THRESHOLD) {
-                return -1;
-            }
-
-            let targetIndex = -1;
-
-            if (count <= 2) {
-                targetIndex = left > right ? 0 : 1;
-            } else if (count <= 4) {
-                let isRowUp = up > down;
-                let isColLeft = left > right;
-
-                if (isRowUp) {
-                    targetIndex = isColLeft ? 0 : 1;
-                } else {
-                    targetIndex = isColLeft ? 2 : 3;
-                }
+                const targetIndex = calculateGazeZone(left, right, up, down);
+                updateDwellTime(targetIndex);
             } else {
-                let isRowUp = up > down;
-                let isColLeft = (left > right * 1.5);
-                let isColRight = (right > left * 1.5);
-
-                let col = 1;
-                if (isColLeft) col = 0;
-                if (isColRight) col = 2;
-
-                if (isRowUp) {
-                    targetIndex = col;
-                } else {
-                    targetIndex = 3 + col;
-                }
-            }
-
-            if (targetIndex >= count) {
-                targetIndex = -1;
-            }
-
-            if (targetIndex !== -1) {
-                const card = document.getElementById(`card-${targetIndex}`);
-                if (card && card.classList.contains('disappeared')) {
-                    return -1;
-                }
-            }
-
-            return targetIndex;
-        }
-
-        function updateDwellTime(targetIndex) {
-            if (isCoolingDown) return;
-
-            const activeItems = defaultPresets.filter(p => selectedItems.includes(p.id));
-
-            if (targetIndex !== currentTargetIndex) {
-                resetGauges();
-                currentTargetIndex = targetIndex;
-                dwellStartTime = targetIndex !== -1 ? performance.now() : null;
-            } else if (targetIndex !== -1 && dwellStartTime) {
-                const card = document.getElementById(`card-${targetIndex}`);
-                if (card && !card.classList.contains('disappeared')) {
-                    card.classList.add('hovered');
-
-                    const elapsed = performance.now() - dwellStartTime;
-                    const progress = Math.min(100, (elapsed / dwellTimeMs) * 100);
-
-                    const gauge = document.getElementById(`gauge-${targetIndex}`);
-                    if (gauge) gauge.style.width = `${progress}%`;
-
-                    if (elapsed >= dwellTimeMs) {
-                        triggerSelection(targetIndex, activeItems[targetIndex]);
-                    }
-                }
+                updateDwellTime(-1);
             }
         }
+    }
+    requestAnimationFrame(predictWebcam);
+}
 
-        function resetGauges() {
-            document.querySelectorAll('.menu-card').forEach(c => c.classList.remove('hovered'));
-            document.querySelectorAll('.gauge-overlay').forEach(g => g.style.width = '0%');
+function calculateGazeZone(left, right, up, down) {
+    const activeItems = defaultPresets.filter(p => selectedItems.includes(p.id));
+    const count = activeItems.length;
+
+    let THRESHOLD = sensitivityThreshold;
+
+    // どの方向にも目線が向いていない（極小の）場合のみ無効判定
+    if (left < THRESHOLD && right < THRESHOLD && up < THRESHOLD && down < THRESHOLD) {
+        return -1;
+    }
+
+    let targetIndex = -1;
+
+    if (count <= 2) {
+        targetIndex = left > right ? 0 : 1;
+    } else if (count <= 4) {
+        let isRowUp = up > down;
+        let isColLeft = left > right;
+
+        if (isRowUp) {
+            targetIndex = isColLeft ? 0 : 1;
+        } else {
+            targetIndex = isColLeft ? 2 : 3;
         }
+    } else {
+        // 5〜6項目の場合：左右の感度比較の差分条件を緩和（1.2倍の開きで判定）
+        let isRowUp = up > down;
+        let isColLeft = (left > right * 1.2);
+        let isColRight = (right > left * 1.2);
 
-        function triggerSelection(index, item) {
-            isCoolingDown = true;
-            resetGauges();
+        let col = 1; // 中央
+        if (isColLeft) col = 0;
+        if (isColRight) col = 2;
 
-            const card = document.getElementById(`card-${index}`);
-            if (card) card.classList.add('selected-active');
-
-            speak(item.label, () => {
-                if (card) {
-                    card.classList.remove('selected-active');
-                    card.classList.add('disappeared');
-                }
-                currentTargetIndex = -1;
-                dwellStartTime = null;
-                isCoolingDown = false;
-
-                checkAllCleared();
-            });
+        if (isRowUp) {
+            targetIndex = col;
+        } else {
+            targetIndex = 3 + col;
         }
+    }
 
-        function checkAllCleared() {
-            const remainingCards = document.querySelectorAll('.menu-card:not(.disappeared)');
-            if (remainingCards.length === 0) {
-                setTimeout(() => {
-                    ui.sparkleOverlay.classList.add('active');
-                    ui.completionMessage.classList.add('show');
-                    playKPopSound();
+    if (targetIndex >= count) {
+        targetIndex = -1;
+    }
 
-                    setTimeout(() => {
-                        speak("おいしく食べましょう！");
-                    }, 300);
-
-                }, 300);
-            }
+    if (targetIndex !== -1) {
+        const card = document.getElementById(`card-${targetIndex}`);
+        if (card && card.classList.contains('disappeared')) {
+            return -1;
         }
+    }
 
-        ui.backToSetupBtn.addEventListener('click', () => {
-            window.speechSynthesis.cancel();
-            ui.presentationScreen.classList.remove('active');
-            ui.setupScreen.classList.add('active');
-        });
-
-        renderPresets();
-    </script>
-</body>
-</html>
+    return targetIndex;
+}
