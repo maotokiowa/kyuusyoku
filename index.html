@@ -115,9 +115,9 @@
             <div class="setting-row">
                 <label for="gaze-sensitivity">目線の感度</label>
                 <select id="gaze-sensitivity">
-                    <option value="0.08" selected>爆速超高感度（5〜6項目でもわずかな動きで反応）</option>
-                    <option value="0.12">高感度</option>
-                    <option value="0.20">標準</option>
+                    <option value="0.04" selected>iPad最適（超高感度・わずかな目線で反応）</option>
+                    <option value="0.08">高感度</option>
+                    <option value="0.12">標準</option>
                 </select>
             </div>
 
@@ -137,8 +137,9 @@
 
     <!-- 2. 生徒用発表画面 -->
     <div id="presentation-screen" class="screen">
+        <!-- ★iPad/iOS対策: muted, playsinline, autoplay を明示 -->
         <div class="camera-container">
-            <video id="webcam" autoplay playsinline></video>
+            <video id="webcam" autoplay playsinline muted></video>
         </div>
 
         <div class="presentation-header">
@@ -172,7 +173,7 @@
 
         let selectedItems = ['rice', 'soup', 'milk', 'meat', 'dessert'];
         let dwellTimeMs = 250;
-        let sensitivityThreshold = 0.08;
+        let sensitivityThreshold = 0.04;
         let faceLandmarker = null;
         let lastVideoTime = -1;
         let isCameraInit = false;
@@ -238,6 +239,17 @@
             ui.customLabel.value = '';
             renderPresets();
         });
+
+        // iOSの音声制限解除用フラグ
+        let audioUnlocked = false;
+        function unlockAudio() {
+            if (audioUnlocked) return;
+            if ('speechSynthesis' in window) {
+                const dummyUtterance = new SpeechSynthesisUtterance('');
+                window.speechSynthesis.speak(dummyUtterance);
+            }
+            audioUnlocked = true;
+        }
 
         function speak(text, onEnd) {
             if (!('speechSynthesis' in window)) return;
@@ -312,6 +324,7 @@
         }
 
         ui.startBtn.addEventListener('click', async () => {
+            unlockAudio(); // iOS Safariの音声ロック解除
             dwellTimeMs = parseInt(ui.dwellTimeSelect.value);
             sensitivityThreshold = parseFloat(ui.sensitivitySelect.value);
             ui.startBtn.disabled = true;
@@ -328,7 +341,6 @@
             try {
                 const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
                 
-                // ★動作互換性を考慮し、GPUからCPUへ変更
                 faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
                     baseOptions: { 
                         modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`, 
@@ -337,19 +349,26 @@
                     outputFaceBlendshapes: true, runningMode: "VIDEO", numFaces: 1
                 });
 
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 1280, height: 720, facingMode: "user" } 
-                });
-                
+                const constraints = {
+                    video: {
+                        facingMode: "user",
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    }
+                };
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 ui.video.srcObject = stream;
-                ui.video.addEventListener("loadeddata", () => {
-                    isCameraInit = true;
-                    predictWebcam();
-                    startPresentation();
-                });
+                
+                // iPad Safari対策: 明示的にplay()を呼び出す
+                await ui.video.play();
+
+                isCameraInit = true;
+                predictWebcam();
+                startPresentation();
             } catch (err) {
                 console.error("AI/Camera Error:", err);
-                alert("カメラまたはAIの起動に失敗しました。\n・カメラの使用許可を確認してください\n・HTTPSでアクセスしているか確認してください\nエラー詳細: " + err.message);
+                alert("カメラの読み込みに失敗しました。\nSafariの設定でカメラアクセスが『許可』になっているか確認してください。\nエラー: " + err.message);
                 ui.startBtn.disabled = false;
                 ui.loadingMsg.style.display = 'none';
             }
@@ -386,21 +405,24 @@
         function predictWebcam() {
             if (faceLandmarker && ui.presentationScreen.classList.contains('active')) {
                 let startTimeMs = performance.now();
-                if (lastVideoTime !== ui.video.currentTime) {
+                
+                // iPad/iOS Safari対策: readyStateがHAVE_ENOUGH_DATA(4)以上であることを確認
+                if (ui.video.readyState >= 2 && lastVideoTime !== ui.video.currentTime) {
                     lastVideoTime = ui.video.currentTime;
                     const results = faceLandmarker.detectForVideo(ui.video, startTimeMs);
 
                     if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
                         const shapes = results.faceBlendshapes[0].categories;
                         
-                        const left = (shapes.find(s => s.categoryName === "eyeLookOutLeft")?.score || 0) + 
-                                     (shapes.find(s => s.categoryName === "eyeLookInRight")?.score || 0);
-                        const right = (shapes.find(s => s.categoryName === "eyeLookInLeft")?.score || 0) + 
-                                      (shapes.find(s => s.categoryName === "eyeLookOutRight")?.score || 0);
-                        const up = (shapes.find(s => s.categoryName === "eyeLookUpLeft")?.score || 0) + 
-                                   (shapes.find(s => s.categoryName === "eyeLookUpRight")?.score || 0);
-                        const down = (shapes.find(s => s.categoryName === "eyeLookDownLeft")?.score || 0) + 
-                                     (shapes.find(s => s.categoryName === "eyeLookDownRight")?.score || 0);
+                        // iPad用に目線数値を2倍にブースト（小さな目の動きを大きく検出）
+                        const left = ((shapes.find(s => s.categoryName === "eyeLookOutLeft")?.score || 0) + 
+                                     (shapes.find(s => s.categoryName === "eyeLookInRight")?.score || 0)) * 2.0;
+                        const right = ((shapes.find(s => s.categoryName === "eyeLookInLeft")?.score || 0) + 
+                                      (shapes.find(s => s.categoryName === "eyeLookOutRight")?.score || 0)) * 2.0;
+                        const up = ((shapes.find(s => s.categoryName === "eyeLookUpLeft")?.score || 0) + 
+                                   (shapes.find(s => s.categoryName === "eyeLookUpRight")?.score || 0)) * 2.5;
+                        const down = ((shapes.find(s => s.categoryName === "eyeLookDownLeft")?.score || 0) + 
+                                     (shapes.find(s => s.categoryName === "eyeLookDownRight")?.score || 0)) * 2.0;
 
                         const targetIndex = calculateGazeZone(left, right, up, down);
                         updateDwellTime(targetIndex);
@@ -416,10 +438,7 @@
             const activeItems = defaultPresets.filter(p => selectedItems.includes(p.id));
             const count = activeItems.length;
 
-            // AIの「上目線」数値を1.5倍に補正ブースト
-            up = up * 1.5; 
-
-            let THRESHOLD = sensitivityThreshold * 0.5;
+            let THRESHOLD = sensitivityThreshold;
 
             if (left < THRESHOLD && right < THRESHOLD && up < THRESHOLD && down < THRESHOLD) {
                 return -1;
@@ -430,7 +449,6 @@
             if (count <= 2) {
                 targetIndex = left > right ? 0 : 1;
             } else if (count <= 4) {
-                // 3〜4つの時：シンプルに2×2の領域判定
                 let isRowUp = up > down;
                 let isColLeft = left > right;
 
@@ -440,12 +458,11 @@
                     targetIndex = isColLeft ? 2 : 3;
                 }
             } else {
-                // 5〜6つの時：真ん中の判定範囲を広く確保（1.8倍の開きで端と判定）
                 let isRowUp = up > down;
-                let isColLeft = (left > right * 1.8);
-                let isColRight = (right > left * 1.8);
+                let isColLeft = (left > right * 1.5);
+                let isColRight = (right > left * 1.5);
 
-                let col = 1; // デフォルトは真ん中
+                let col = 1;
                 if (isColLeft) col = 0;
                 if (isColRight) col = 2;
 
